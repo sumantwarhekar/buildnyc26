@@ -23,7 +23,13 @@ export async function proxy(request: NextRequest) {
     }
   );
 
-  const { data: { user } } = await supabase.auth.getUser();
+  let user = null;
+  try {
+    const { data } = await supabase.auth.getUser();
+    user = data.user;
+  } catch {
+    // If Supabase is unreachable, fail open — let the page handle auth
+  }
 
   // Protect dashboard and interview routes
   if (!user && (
