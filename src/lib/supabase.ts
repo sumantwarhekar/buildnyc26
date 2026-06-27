@@ -1,14 +1,23 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { createBrowserClient as createSSRBrowserClient } from "@supabase/ssr";
 
-// Server-side client (uses service role for admin ops)
-export const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+// Singleton SSR-compatible browser client — stores session in cookies so
+// the server middleware can read it (not localStorage which middleware can't see)
+let browserClient: ReturnType<typeof createSSRBrowserClient> | null = null;
 
-// Browser client (uses anon key)
-export const createBrowserClient = () =>
+export const createBrowserClient = () => {
+  if (!browserClient) {
+    browserClient = createSSRBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+  }
+  return browserClient;
+};
+
+// Admin client (service role — server only, never import in client components)
+export const getSupabaseAdmin = () =>
   createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
