@@ -1,0 +1,228 @@
+Architectural Blueprint and Hackathon Execution Plan: AI Interview Preparation Agent
+The development of an Artificial Intelligence (AI) interview preparation agent requires the orchestration of real-time audio processing, client-side computer vision, low-latency natural language processing, and robust state management. This document outlines an exhaustive architectural blueprint and execution plan for building a tiered, scenario-based technical interview agent during a constrained hackathon timeframe. The proposed application challenges the user with adaptive technical scenarios—escalating from basic concepts to expert-level debugging based on user-provided topics—while simultaneously evaluating their verbal responses and non-verbal facial expressions.
+To maximize developer velocity, minimize infrastructure costs, and ensure high performance, the system leverages a modern serverless stack: Next.js (App Router) deployed on Vercel, Supabase for backend services, Sentry for observability, and Resend for automated reporting. AI inference is split strategically between the client and the edge. Facial expression detection executes directly in the browser utilizing Hugging Face models via Transformers.js, completely eliminating video bandwidth costs and server-side vision processing latency. Conversely, audio transcription and conversational intelligence are handled by free Speech-to-Text (STT) APIs and high-speed language models, ensuring natural conversational pacing. This report details the technical implementation strategy, data flow architectures, prompt engineering methodologies, and critical infrastructure mitigations necessary to deliver a production-grade prototype.
+System Architecture and Component Topology
+The architectural design prioritizes low latency, stateful client-server communication, and zero-configuration scalability. The separation of concerns is strictly maintained across the frontend user interface, client-side machine learning workers, edge-based API routes, and external managed services. Deploying computationally heavy, long-running AI pipelines on serverless infrastructure introduces strict architectural constraints that must be accounted for during the initial design phase.
+
+Component
+Technology
+Primary Function
+Justification for Hackathon Context
+Framework
+Next.js 14+ (App Router)
+Full-stack React framework, UI rendering, serverless API routes.
+Rapid prototyping, built-in API routing, seamless Vercel deployment, and native Server Components support1.
+Database & Auth
+Supabase
+User authentication, session storage, Postgres database, Edge Functions.
+Provides instant backend-as-a-service with real-time capabilities and PostgreSQL robustness without DevOps overhead3.
+Audio AI
+Free STT APIs (Whisper)
+Speech-to-Text (STT) transcription.
+Unmatched inference speed and accuracy; capable of running client-side via WebAssembly or via free-tier edge APIs5.
+Conversational AI
+LLaMA 3 / Groq
+Natural Language Processing, scenario generation, JSON-based evaluation.
+High-speed inference, excellent instruction following, and native support for strict JSON structured outputs7.
+Vision AI
+Hugging Face Models
+Client-side facial expression analysis and emotion tracking.
+Executes entirely in the browser using WebAssembly/WebGPU via Transformers.js, eliminating video upload latency6.
+Email Services
+Resend & React Email
+Automated post-interview evaluation report dispatch.
+Developer-friendly API, native React component rendering for email templates, and high deliverability12.
+Observability
+Sentry
+Real-time error tracking, performance monitoring, and tracing.
+Rapid bug identification during high-pressure development, automatic Next.js instrumentation15.
+Infrastructure
+Vercel
+Hosting, CI/CD, Serverless Functions, Fluid Compute.
+Zero-config deployments, automatic scaling, and native support for streaming responses and extended durations17.
+
+The system operates on a continuous, multi-modal feedback loop. When an interview session initiates, the browser requests microphone and webcam permissions. The webcam stream is piped directly into a hidden HTML canvas, where a Web Worker running a quantized Hugging Face vision model extracts frame-by-frame emotion data. Concurrently, the microphone captures audio, chunking it via the MediaRecorder API. When the user finishes speaking, the audio chunks are compiled and processed by a free speech-to-text service. The resulting text, combined with the aggregated client-side emotion data and the current interview state, is passed to the language model. The LLM evaluates the response against the current technical scenario, determines if the user should progress to a higher difficulty tier, and generates the next question as a strict JSON object. This JSON is returned to the client, updating the UI. Upon completion of the interview, the aggregated session data is saved to Supabase, triggering a backend workflow that uses Resend to email a comprehensive performance report.
+Client-Side Vision and Emotion Tracking
+A critical differentiator of this agent is its ability to monitor candidate composure, confidence, and stress levels via facial expressions. Processing video streams on the server is highly inefficient, expensive, and raises severe privacy concerns. Therefore, all visual analysis is localized to the user's device utilizing Hugging Face models optimized for browser-based inference.
+The application utilizes JavaScript-based machine learning libraries to execute computer vision tasks directly within the browser. The primary mechanism for this is Transformers.js, a library built by Hugging Face that mirrors their Python transformers library and runs models directly in the browser using WebAssembly and WebGPU6. By leveraging WebGPU, developers can achieve GPU-accelerated inference in the browser, which is up to one hundred times faster than traditional WebAssembly fallback methods, making real-time 30-frames-per-second video analysis viable on consumer hardware6.
+Model Selection and Evaluation
+The Hugging Face Hub hosts numerous models fine-tuned for facial expression recognition. Selecting the appropriate model for a web-based hackathon project requires balancing model accuracy, parameter size (which dictates download time), and the specific emotion classes supported. Several candidate models present distinct advantages.
+
+Model Identifier
+Architecture
+Size / Parameters
+Accuracy / Features
+Target Emotion Classes
+prithivMLmods/Facial-Emotion-Detection-SigLIP2
+Vision-Language Encoder (SigLIP2)
+Base Patch16 (High)
+~86.65% Accuracy, excellent precision for specific emotions20.
+Angry, Happy, Neutral, Sad, Surprise, Ahegao20.
+abhilash88/face-emotion-detection
+Vision Transformer (ViT-Base)
+~85.8 Million
+~71.55% Accuracy on FER2013; struggles with extreme poses21.
+Angry, Disgust, Fear, Happy, Sad, Surprise, Neutral21.
+mo-thecreator/vit-Facial-Expression-Recognition
+Vision Transformer (ViT-Base)
+Standard ViT
+~84.34% Accuracy; fine-tuned on multiple datasets (FER2013, AffectNet)22.
+Angry, Disgust, Fear, Happy, Sad, Surprise, Neutral22.
+Xenova/facial_emotions_image_detection
+ONNX Quantized Pipeline
+Highly Compressed
+Optimized specifically for Transformers.js and browser environments10.
+Angry, Disgust, Fear, Happy, Neutral, Sad, Surprise10.
+
+For this implementation, utilizing an ONNX-quantized model specifically ported for Transformers.js, such as Xenova/facial_emotions_image_detection, is the optimal path10. The pipeline API abstracts the complexity of tensor manipulation. To implement this, the application instantiates an image classification pipeline specifying the task and model identifier6. The first invocation downloads and caches the model weights in the browser's IndexedDB, ensuring subsequent loads are instantaneous and capable of functioning entirely offline6.
+Web Worker Architecture and Data Aggregation
+To prevent the heavy matrix multiplications of the neural network from blocking the main React rendering thread, which would cause the user interface to freeze or stutter, the model instantiation and inference must be isolated within a dedicated Web Worker5. The Next.js application creates a separate JavaScript thread with no DOM access, specifically designed for long-running machine learning tasks5.
+When the user activates their webcam, a React hook binds the media stream to a hidden HTML <video> element26. A requestAnimationFrame loop continuously draws the current video frame to an OffscreenCanvas, extracts the raw image data, and posts this payload to the Web Worker5. The worker processes the frame through the Hugging Face pipeline and posts back an array of predicted emotions and their confidence scores10.
+Because inference runs at high frame rates, the application generates a massive volume of emotion data points per answer. Sending every data point to the backend language model is unnecessary, wastes context window tokens, and increases latency. Instead, the frontend must maintain an accumulator algorithm. During the duration of a single user response—for instance, a forty-five-second spoken answer—the Web Worker tracks the dominant emotion per frame. When the user stops recording, the frontend calculates the statistical distribution of emotions during that specific answer window. The application transforms the raw time-series data into a consolidated JSON metadata object, representing the proportional dominance of each emotion. This aggregated behavioral metadata is appended to the user's transcribed text payload, allowing the AI interviewer to contextually evaluate the candidate's confidence alongside their technical accuracy.
+Audio Capture and Free Speech-to-Text Processing
+The interview agent requires reliable, cross-browser audio capture to simulate a natural conversation. This is achieved using the native HTML5 MediaRecorder API combined with free Speech-to-Text (STT) capabilities, either executed entirely client-side or routed through a free-tier API.
+Browser Audio Capture Mechanics
+The frontend utilizes a custom React hook to manage the microphone lifecycle and state management for audio recording27. When the user triggers the recording state, navigator.mediaDevices.getUserMedia({ audio: true }) prompts the user for permissions and initializes the microphone stream27. The stream is then passed to a new MediaRecorder instance29.
+A critical engineering challenge in web-based audio recording is cross-browser format compatibility, particularly concerning MIME types. While Google Chrome and Mozilla Firefox seamlessly support highly compressed formats like audio/webm;codecs=opus, Apple's Safari browser on iOS devices has historically exhibited strict preferences, sometimes defaulting to or requiring fallback MIME types such as audio/mp4 or audio/wav31. To ensure a robust application, the implementation uses the MediaRecorder.isTypeSupported() method to iterate through an array of preferred MIME types, selecting the optimal codec dynamically based on the host device31.
+As the user speaks, the MediaRecorder fires ondataavailable events, yielding discrete chunks of audio data28. These chunks are pushed into a mutable reference array managed by a useRef hook to prevent unnecessary React re-renders28. Upon stopping the recording, the chunks are merged into a single binary Blob using the previously detected MIME type27. Depending on the chosen STT architecture, this Blob is either processed locally or appended to a FormData object and transmitted via a POST request to a Next.js serverless API route for external processing31.
+Implementing Free Speech-to-Text Integration
+The project requires a free speech-to-text API solution, which can be accomplished through two distinct architectural pathways: client-side processing using Transformers.js, or edge-based processing using a generous free-tier provider like Groq.
+The first approach leverages the same Transformers.js infrastructure used for the vision models to execute Whisper-family models entirely in the browser. By loading a multilingual model like Xenova/whisper-tiny via the @huggingface/transformers package, the application achieves absolute privacy and incurs zero server costs5. The audio Blob is decoded into 16 kHz PCM format, which is the specific sampling rate required by Whisper models, and fed into an automatic speech recognition pipeline operating within a Web Worker5. This approach is ideal for hackathons as it completely eliminates backend API dependency for transcription, though it relies heavily on the user's local device compute power, which may introduce latency on older hardware2.
+Alternatively, developers can utilize a cloud provider offering a free tier for high-speed inference, such as Groq. Groq's API provides access to the Whisper Large V3 model, offering state-of-the-art speech recognition with sub-second latency powered by their specialized LPU architecture33. In this architecture, the Next.js API route receives the FormData containing the audio Blob and constructs a request to the Groq API. The integration utilizes the groq-sdk package, which requires wrapping the raw buffer into a file-like object using the toFile helper function to satisfy the multipart/form-data requirements of the /openai/v1/audio/transcriptions endpoint35. This edge-based transcription happens on dedicated hardware, circumventing the computational load of client-side processing and ensuring the application remains highly responsive regardless of the user's device capabilities.
+Conversational Logic and Adaptive Tiered Scenarios
+The defining feature of this application is its adaptive, scenario-based questioning mechanism. Unlike static flashcards or standardized quizzes, the AI must evaluate the depth of the candidate's knowledge based on user-provided topics and dynamically escalate the complexity of the technical scenarios. The prompt engineering and LLM state management are paramount to executing this behavior reliably.
+Processing User-Provided Topics
+At the initiation of the interview session, the user provides a topic they wish to be interviewed on. To ensure the AI generates highly specific, contextual scenarios rather than generic questions, the user-provided topic is injected into a master system prompt. For instance, if the user inputs "React StrictMode debugging," the system dynamically constructs a behavioral contract for the LLM.
+The system prompt explicitly defines the persona as a Senior Engineering Manager conducting a technical screen, the subject matter as the user's inputted topic, and the rigid rules for the escalation matrix7. The context window is maintained via the Next.js backend, which leverages the Vercel AI SDK to manage the state of the conversation as an array of messages representing the back-and-forth dialogue25.
+The Tiered Escalation Matrix
+The technical scenarios are structured into four distinct, escalating tiers. The language model is instructed via the system prompt to begin at Tier 1 and only advance to the subsequent tier if the candidate successfully resolves the current scenario and demonstrates sufficient comprehension. If the user provided "React StrictMode debugging" as the topic, the generated matrix operates as follows:
+Tier 1: Fundamental Concept (Basic): Assesses baseline knowledge and terminology. The agent might present a scenario such as: "You notice a React component is rendering twice in your local development environment, but only once in production. What specific feature is causing this behavior?"
+Tier 2: Mechanism and Architecture (Advanced): Probes the underlying architectural reasons for the behavior. Upon the user identifying StrictMode, the agent escalates: "Exactly. StrictMode intentionally double-invokes certain lifecycle methods. Why did the React core team design it this way, and what specific types of bugs are they trying to help developers catch?"
+Tier 3: Applied Debugging (Expert): Presents a broken code scenario requiring practical application. "Let's assume you have a useEffect hook that establishes a WebSocket connection. Because of StrictMode, the connection is opened twice, leading to memory leaks. How do you correctly architect your component to handle this double-invocation without simply disabling StrictMode?"
+Tier 4: System Design and Trade-offs (Architect): Explores broader implications and architectural trade-offs. "If you are managing global state across a large application using a library like Redux, how might StrictMode's double-invocation interact with your state reducers, and what functional programming principles must you enforce to protect against bugs here?"
+Structured JSON Outputs and Evaluation
+To programmatically control the user interface based on the LLM's assessment, the AI must return structured data rather than raw conversational text. Groq's LLaMA 3 models natively support Structured Outputs (JSON Mode), which constrains the model at the token level to guarantee strict schema adherence, preventing the generation of malformed text that would break frontend parsing logic8.
+The system prompt dictates that every response must conform to a specific JSON schema. This schema forces the model to articulate its internal reasoning before outputting the final dialogue, a technique known as chain-of-thought prompting that significantly improves evaluation accuracy37. The schema requires the extraction of the candidate's score, the internal reasoning incorporating the client-side emotion data, and the next conversational output.
+
+JSON Key
+Expected Data Type
+Functional Description
+candidate_evaluation
+String
+Internal chain-of-thought analyzing the user's technical accuracy and the provided emotion data (e.g., noting high anxiety).
+technical_score
+Integer
+A calculated score from 0 to 100 representing the accuracy and completeness of the current answer37.
+tier_progression
+Boolean
+Returns true if the candidate passed the current tier; false if the agent must ask a clarifying question on the same tier.
+next_dialogue
+String
+The actual spoken text the interviewer will reply with, to be rendered on screen or passed to a text-to-speech engine.
+interview_complete
+Boolean
+Flags the end of the session, triggering the final report generation and backend database sync.
+
+By utilizing strict JSON parsing, the Next.js frontend can confidently update the UI progress bar based on the technical_score, transition application states based on tier_progression, and render the interviewer's dialogue8. This structured output approach reduces the need for complex regular expression matching and validation logic, ensuring a stable application flow during the hackathon demonstration.
+Overcoming Infrastructure Constraints: Vercel and Supabase
+Deploying computationally heavy, long-running AI pipelines on serverless infrastructure introduces strict limitations regarding execution timeouts, connection pooling, and payload sizes. Understanding and bypassing these limitations is crucial for a successful deployment, as silent failures can easily destroy a hackathon presentation.
+Defeating Vercel Serverless Timeouts
+Vercel's execution environments impose strict maximum durations on serverless functions to prevent runaway compute costs. On the free Hobby tier, functions are forcefully terminated after ten seconds; on the Pro tier, the default is fifteen seconds17. An API route that must accept an audio file, wait for a transcription API, generate a prompt, wait for an LLM evaluation, and return a JSON payload is highly susceptible to breaching this ten-second ceiling, resulting in a 504 Gateway Timeout or a CONNECT_TIMEOUT error40.
+To mitigate this, the architecture employs a multi-layered defense strategy centered around Vercel's Fluid Compute technology and configuration overrides. Next.js allows developers to export a maxDuration constant within the specific API route file (e.g., export const maxDuration = 60;), overriding the default limit17. Combined with Fluid Compute, which pools function compute resources to optimize concurrency and reduce cold starts, this extends the execution window up to sixty seconds on the free tier, providing ample time for sequential AI API calls17. Furthermore, rather than waiting for the entire JSON object to generate, the backend utilizes the Vercel AI SDK to stream the response back to the client token-by-token39. Streaming immediately opens the HTTP response header, satisfying the initial serverless timeout requirements, and keeps the connection alive for the duration of the generation process41.
+Database Connections and Payload Constraints
+Supabase provides the PostgreSQL backbone for the application, storing user profiles, interview metadata, and the turn-by-turn dialogue transcripts3. However, intermittent connection timeout errors can occur when using persistent clients within serverless functions, as the serverless environment may freeze the function between requests, causing TCP sockets to go stale40. To resolve this, the architecture migrates read/write-heavy workloads to the Supabase Data API (PostgREST), which uses stateless HTTP requests and avoids persistent TCP socket issues entirely, ensuring reliable data synchronization at the end of the interview session40.
+Additionally, serverless environments typically restrict incoming request payloads; for example, Vercel limits request bodies to 4.5 MB43. A prolonged, uncompressed audio recording can easily exceed this limit. To prevent payload rejection, the MediaRecorder API on the client side is configured to use heavy compression, prioritizing the Opus codec which offers a massive compression ratio compared to raw WAV files31. The frontend also enforces a strict sixty-second limit per user response, automatically stopping the recording and dispatching the chunk if the user speaks too long, guaranteeing that audio Blobs remain well under the payload limit and ensuring rapid upload speeds.
+Automated Evaluation and Asynchronous Reporting
+Once the LLM flags the interview session as complete, the system transitions from real-time interaction to batch processing and asynchronous reporting. The final evaluation score is not a simple average, but rather a weighted proprietary metric calculated on the backend that accounts for both technical accuracy and behavioral composure.
+Let  represent the technical score of turn , and  represent the emotional stability penalty derived from the Hugging Face vision model (where high fear or anxiety subtracts points, and high confidence neutralizes the penalty). The total score  over  turns can be modeled mathematically as:
+
+Where  is a tier-based weight, ensuring that expert-level questions carry more weight than basic foundational questions, and  is a scaling factor for the emotional penalty. This algorithm allows the platform to provide highly nuanced feedback, indicating not just what the user got wrong, but how they reacted under simulated technical pressure.
+Supabase Edge Functions and Resend Integration
+Following the calculation of the final score and the generation of a comprehensive feedback summary via a final background LLM call, the system automatically dispatches an evaluation report to the candidate's inbox. This workflow is orchestrated using Supabase Edge Functions and Resend.
+When the session ends, the Next.js frontend pushes the complete JSON array of the interview transcript to a Supabase Edge Function3. Edge Functions, built on the Deno runtime, offer low-latency execution and provide a secure environment to run backend logic without exposing database credentials or API keys to the client browser3.
+The application utilizes Resend, a modern developer-centric email API, paired seamlessly with React Email12. React Email allows developers to construct complex email templates using standard React components (such as <Html>, <Container>, and <Text>), completely eliminating the notorious difficulties of writing raw, cross-client compatible HTML tables12. The Edge Function acts as a webhook; it extracts the user's email address from the Supabase Auth context, securely retrieves the RESEND_API_KEY from the environment variables, and invokes the resend.emails.send() method3.
+To ensure high deliverability and avoid spam filters—a common pitfall in hackathon projects—the developer must verify the sending domain within the Resend dashboard by adding specific DNS records (DKIM and SPF) to their domain registrar14. The payload sent to Resend includes the compiled React Email template, containing the user's weighted score, a breakdown of their performance across the four tiers, and actionable advice for improvement based on the LLM's final analysis12.
+Application Observability and Telemetry
+In the chaotic environment of a hackathon, silent failures—such as a malformed audio Blob, a rejected WebRTC permission, an exhausted WebGPU context, or a rate-limited API—can destroy a demonstration. Robust observability is therefore non-negotiable for rapid debugging and presentation stability.
+The project integrates Sentry into both the Next.js frontend and the serverless backend to provide full-stack error tracking, tracing, and performance monitoring15. Installation is streamlined using the Sentry wizard (npx @sentry/wizard@latest -i nextjs), which automatically configures the application and creates separate initialization files for the client (instrumentation-client.ts), the server (sentry.server.config.ts), and the edge runtime (sentry.edge.config.ts)15. The wizard also seamlessly wraps the Next.js configuration (withSentryConfig) to enable necessary build-time features47.
+A critical configuration step involves setting up source map uploads during the build process49. By injecting Debug IDs into the artifacts and securely passing the SENTRY_AUTH_TOKEN environment variable, Sentry can deminify stack traces in the production Vercel environment48. This allows developers to trace a production error directly to the exact line of TypeScript code, saving invaluable time during the hackathon.
+Furthermore, Sentry's performance monitoring captures the latency of the API routes. If the chosen speech-to-text API experiences degraded performance, or if the LLM JSON parsing logic enters a prolonged state, Sentry dashboards will flag the anomaly in real-time16. For client-side monitoring, the application implements React Error Boundaries wrapped by Sentry's captureException utility15. If the Transformers.js Web Worker crashes due to memory exhaustion on a low-end device, the Error Boundary gracefully degrades the UI, safely disables the emotion tracking feature, and allows the user to continue the audio-only interview without a catastrophic application failure16.
+Hackathon Project Management and Execution Timeline
+Success in a time-boxed, forty-eight-hour hackathon relies on strict prioritization, parallel development tracks, and ruthless scope management. The execution strategy divides the workload into two primary tracks: Frontend/Vision AI and Backend/Conversational AI.
+Timeframe
+Track A (Frontend & Vision AI)
+Track B (Backend, Audio, & LLM)
+Hours 1-4
+Initialize Next.js, configure Tailwind CSS, build basic UI shells and routing.
+Set up Supabase PostgreSQL schema, configure Vercel deployment, and integrate Sentry wizard.
+Hours 5-12
+Implement MediaRecorder audio capture, Blob handling, and cross-browser codec fallback logic.
+Integrate free STT API (Whisper); build the audio ingestion and parsing endpoint.
+Hours 13-20
+Implement Transformers.js Web Worker for emotion tracking; test WebGPU/WASM fallback.
+Prompt engineering for the language model; configure Structured JSON outputs and escalation rules.
+Hours 21-28
+Build interview UI state machine (progress bars, feedback loops, real-time emotion gauges).
+Connect STT text output and emotion metrics to the LLM evaluation endpoint.
+Hours 29-36
+Implement React Error Boundaries and gracefully degrading fallback UI states.
+Create Supabase Edge Function; design and test Resend/React Email templates.
+Hours 37-42
+Integration testing: Fix audio codec issues, optimize video canvas framerates.
+Tune Vercel maxDuration limits and Fluid Compute settings; refine system prompts for edge cases.
+Hours 43-48
+Final polish, UI animations, recording demo videos, and pitch deck creation.
+Load testing, clearing database test records, verifying email deliverability, and presentation prep.
+
+The project is governed by strict milestone definitions to ensure momentum. Milestone one involves achieving the "Hello World Voice," where the application successfully records audio, transcribes it, and prints the string to the console. Milestone two focuses on the "Brain," ensuring the LLM successfully ingests transcribed text, evaluates it against a technical scenario, and returns a valid, parsed JSON object without hallucinating formats. Milestone three involves the "Eyes," where the Web Worker successfully extracts emotion metadata from the webcam without crashing the main React thread. The final milestone connects the entire pipeline end-to-end, concluding with the successful delivery of the Resend evaluation email.
+The proposed AI Interview Preparation Agent represents a highly sophisticated synthesis of modern web technologies and artificial intelligence. By combining client-side computer vision with edge-based, ultra-fast language models, the architecture achieves real-time multimodal interaction while elegantly bypassing the high costs and latencies traditionally associated with video processing and server-side machine learning inference. The strategic utilization of Next.js, Vercel, Supabase, Sentry, and Resend provides a robust, zero-maintenance infrastructure perfectly suited for the intense constraints of a hackathon, establishing a scalable foundation for a commercial educational technology platform.
+Works cited
+yiyd1004/nextjs_face_object_detection: Real-time Webcam Object / Face Detection with MediaPipe - GitHub, https://github.com/yiyd1004/nextjs_face_object_detection
+From Concept to Code: Building a Real-Time Face Detection App with Next.js and MediaPipe | by Rafid Mohammad Ahsan | Medium, https://medium.com/@rafidahsanofficial/the-day-i-built-my-first-real-time-face-detection-app-using-mediapipe-735ea0bac252
+Custom Auth Emails with React Email and Resend | Supabase Docs, https://supabase.com/docs/guides/functions/examples/auth-send-email-hook-react-email-resend
+Sending Emails | Supabase Docs, https://supabase.com/docs/guides/functions/examples/send-emails
+In-Browser Speech Transcription & Translation — Next.js, React, TypeScript, Web Workers (Whisper + NLLB), Tailwind CSS, Framer Motion Frontend Project - GitHub, https://github.com/arnobt78/FreeScribe-Transcription-Translation-Machine-Learning--React-FullStack
+Transformers.js: Run AI Models Directly in the Browser - Developers Digest, https://www.developersdigest.tech/blog/transformers-js-guide
+Screen job applicants with Groq llama-3.3-70b and send outcomes via Gmail - N8N, https://n8n.io/workflows/14772-screen-job-applicants-with-groq-llama-33-70b-and-send-outcomes-via-gmail/
+Structured Outputs - GroqDocs - Groq Console, https://console.groq.com/docs/structured-outputs
+Beginner's Guide to Groq API with Llama 3 - GeeksforGeeks, https://www.geeksforgeeks.org/nlp/groq-api-with-llama-3/
+Xenova/facial_emotions_image_detection - Hugging Face, https://huggingface.co/Xenova/facial_emotions_image_detection
+How to Build a Speech-to-Text App with React and Transformers.js - DEV Community, https://dev.to/emojiiii/how-to-build-a-speech-to-text-app-with-react-and-transformersjs-4n1f
+Send emails with Next.js - Resend, https://resend.com/nextjs
+Send emails with Next.js - Resend, https://resend.com/docs/send-with-nextjs
+A Simple Guide to Sending Emails with Resend in Node.js, Next.js, and Express - Medium, https://medium.com/@iamqitmeeer/a-simple-guide-to-sending-emails-with-resend-in-node-js-next-js-and-express-baf5a95dd368
+Manual Setup | Sentry for Next.js, https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/
+Nextjs Sentry - DEV Community, https://dev.to/turingvangisms/nextjs-sentry-5ha4
+How to solve Next.js timeouts - Inngest Blog, https://www.inngest.com/blog/how-to-solve-nextjs-timeouts
+What can I do about Vercel Functions timing out?, https://vercel.com/kb/guide/what-can-i-do-about-vercel-serverless-functions-timing-out
+Static Configuration with vercel.json, https://vercel.com/docs/project-configuration/vercel-json
+prithivMLmods/Facial-Emotion-Detection-SigLIP2 - Hugging Face, https://huggingface.co/prithivMLmods/Facial-Emotion-Detection-SigLIP2
+abhilash88/face-emotion-detection - Hugging Face, https://huggingface.co/abhilash88/face-emotion-detection
+mo-thecreator/vit-Facial-Expression-Recognition - Hugging Face, https://huggingface.co/mo-thecreator/vit-Facial-Expression-Recognition
+AtharAbbas993/Facial_Emotion_Detection - Hugging Face, https://huggingface.co/AtharAbbas993/Facial_Emotion_Detection
+GitHub - deifos/basedsubtitles: Free local substitle generator using transformers js., https://github.com/deifos/basedsubtitles
+Using Transformers.js with the Vercel AI SDK - Hugging Face, https://huggingface.co/docs/transformers.js/integrations/vercel-ai-sdk
+How to build AI facial expression detection into your videos with React - api.video, https://api.video/blog/tutorials/AI-facial-expression-detection-react/
+How to Integrating Speech-to-Text with OpenAI in Next.js 14 | Medium, https://medium.com/@nazardubovyk/creating-voice-input-with-openai-api-and-next-js-14-ff398c60e5b4
+How to create a video and audio recorder in React - LogRocket Blog, https://blog.logrocket.com/how-to-create-video-audio-recorder-react/
+Build an audio transcription app with Whisper - Together AI docs, https://docs.together.ai/docs/how-to-build-real-time-audio-transcription-app
+MediaRecorder - Web APIs | MDN, https://developer.mozilla.org/en-US/docs/Web/API/MediaRecorder
+How to Implement MediaRecorder API Audio Recording and Transcription with iPhone Safari Support | Build with Matija - BuildWithMatija, https://www.buildwithmatija.com/blog/iphone-safari-mediarecorder-audio-recording-transcription
+Building an AI Conversation Practice App: Part 1 - Browser Audio Recording with MediaRecorder API - DEV Community, https://dev.to/yfkiwi/building-an-ai-conversation-practice-app-part-1-browser-audio-recording-with-mediarecorder-api-3cf5
+Groq provider - AI SDK, https://ai-sdk.dev/providers/ai-sdk-providers/groq
+LiveKit + Groq: End-to-End AI Voice Applications - GroqDocs, https://console.groq.com/docs/livekit
+The official Node.js / Typescript library for the Groq API - GitHub, https://github.com/groq/groq-typescript
+STT API with Voice Profiling: Emotion, Accent, Age, and Pitch Detection - Inworld AI, https://inworld.ai/resources/stt-voice-profiling-api
+AUTOMATED VIRTUAL INTERVIEW EVALUATION USING AI, NLP, AND ML - IRJMETS, https://www.irjmets.com/upload_newfiles/irjmets80400085550/paper_file/irjmets80400085550.pdf
+LLMs Inside the Product: A Practical Field Guide - Groq, https://groq.com/blog/llms-inside-the-product-a-practical-field-guide
+Bypassing Vercel's serverless timeouts for LLM streaming (and accidentally triggering a GitHub Trust & Safety ban today) : r/nextjs - Reddit, https://www.reddit.com/r/nextjs/comments/1to63qw/bypassing_vercels_serverless_timeouts_for_llm/
+Troubleshooting 'CONNECT_TIMEOUT' or hanging queries in Serverless Functions, https://supabase.com/docs/guides/troubleshooting/troubleshooting-connect_timeout-or-hanging-queries-in-vercel-serverless-functions-775f92
+Is there any way to bypass the vercel functions time out? : r/nextjs - Reddit, https://www.reddit.com/r/nextjs/comments/1g1ab4p/is_there_any_way_to_bypass_the_vercel_functions/
+Configuring Maximum Duration for Vercel Functions, https://vercel.com/docs/functions/configuring-functions/duration
+Vercel Functions Limits, https://vercel.com/docs/functions/limitations
+Send emails with Supabase Edge Functions - Resend, https://resend.com/docs/send-with-supabase-edge-functions
+Resend · Email for developers, https://resend.com/
+Send email using Resend - React Email, https://react.email/docs/integrations/resend
+Sentry for Next.js, https://docs.sentry.io/platforms/javascript/guides/nextjs/
+Pages Router Setup | Sentry for Next.js, https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/pages-router/
+TypeScript (tsc) | Sentry for Next.js, https://docs.sentry.io/platforms/javascript/guides/nextjs/sourcemaps/uploading/typescript/
